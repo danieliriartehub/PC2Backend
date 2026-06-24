@@ -354,21 +354,28 @@ def eliminar_trabajador(trabajador_id: int, user: models.Usuario = Depends(get_c
 
 @app.patch("/api/trabajadores/{trabajador_id}/contrato")
 def marcar_contrato_trabajador(trabajador_id: int, user: models.Usuario = Depends(get_current_user), db: Session = Depends(get_db)):
-    trabajador = db.query(models.Trabajador).filter(models.Trabajador.id == trabajador_id).first()
-    if not trabajador:
-        raise HTTPException(status_code=404, detail="Trabajador no encontrado")
-    
-    negocio = db.query(models.Negocio).filter(
-        models.Negocio.id == trabajador.negocio_id,
-        models.Negocio.usuario_id == user.id
-    ).first()
-    if not negocio:
-        raise HTTPException(status_code=403, detail="No autorizado")
-    
-    trabajador.tiene_contrato = not trabajador.tiene_contrato # Toggle contract status
-    db.commit()
-    db.refresh(trabajador)
-    return schemas.TrabajadorResponse.model_validate(trabajador)
+    try:
+        trabajador = db.query(models.Trabajador).filter(models.Trabajador.id == trabajador_id).first()
+        if not trabajador:
+            raise HTTPException(status_code=404, detail="Trabajador no encontrado")
+        
+        negocio = db.query(models.Negocio).filter(
+            models.Negocio.id == trabajador.negocio_id,
+            models.Negocio.usuario_id == user.id
+        ).first()
+        if not negocio:
+            raise HTTPException(status_code=403, detail="No autorizado")
+        
+        current_status = bool(trabajador.tiene_contrato)
+        trabajador.tiene_contrato = not current_status
+        db.commit()
+        db.refresh(trabajador)
+        return schemas.TrabajadorResponse.model_validate(trabajador)
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al cambiar contrato: {str(e)}")
 
 # --- SOLICITUD DE RENOVACIÓN ---
 @app.post("/api/solicitudes/renovacion", response_model=schemas.SolicitudRenovacionResponse, status_code=201)
