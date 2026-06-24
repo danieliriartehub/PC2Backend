@@ -10,9 +10,19 @@ import security
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # En Railway es mejor usar Alembic para migraciones, pero para simplificar
-    # la primera inicialización podemos usar create_all.
+    # Crear tablas si no existen
     models.Base.metadata.create_all(bind=engine)
+    
+    # Auto-migración básica para añadir nuevas columnas a la tabla negocio (si no existen)
+    from sqlalchemy import text
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE negocio ADD COLUMN IF NOT EXISTS galeria_nombre VARCHAR(255);"))
+            conn.execute(text("ALTER TABLE negocio ADD COLUMN IF NOT EXISTS stand_numero VARCHAR(50);"))
+            conn.commit()
+    except Exception as e:
+        print(f"Error en auto-migración: {e}")
+        
     yield
 
 app = FastAPI(title="FormalízaYa API - DevSecOps", lifespan=lifespan)
