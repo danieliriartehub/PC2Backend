@@ -199,3 +199,211 @@ def reset_password(data: schemas.ResetPasswordRequest, db: Session = Depends(get
     db.commit()
     
     return {"message": "Contraseña actualizada exitosamente"}
+
+# --- Helper: Obtener usuario autenticado desde JWT ---
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+bearer_scheme = HTTPBearer(auto_error=False)
+
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme), db: Session = Depends(get_db)):
+    if not credentials:
+        raise HTTPException(status_code=401, detail="Token requerido")
+    payload = security.verify_token(credentials.credentials)
+    user_id = payload.get("sub")
+    user = db.query(models.Usuario).filter(models.Usuario.id == int(user_id)).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="Usuario no encontrado")
+    return user
+
+# --- DASHBOARD: Datos reales del vendedor ---
+@app.get("/api/dashboard", response_model=schemas.DashboardResponse)
+def get_dashboard(user: models.Usuario = Depends(get_current_user), db: Session = Depends(get_db)):
+    negocios = db.query(models.Negocio).filter(models.Negocio.usuario_id == user.id).all()
+    negocio_ids = [n.id for n in negocios]
+    
+    licencias = db.query(models.Licencia).filter(models.Licencia.negocio_id.in_(negocio_ids)).all() if negocio_ids else []
+    trabajadores = db.query(models.Trabajador).filter(models.Trabajador.negocio_id.in_(negocio_ids)).all() if negocio_ids else []
+    
+    return schemas.DashboardResponse(
+        usuario_id=user.id,
+        nombre=user.nombre_completo,
+        rol=user.rol.value,
+        negocios=[schemas.NegocioDashboard.model_validate(n) for n in negocios],
+        licencias=[schemas.LicenciaResponse.model_validate(l) for l in licencias],
+        trabajadores=[schemas.TrabajadorResponse.model_validate(t) for t in trabajadores]
+    )
+
+# --- LICENCIAS ---
+@app.get("/api/licencias", response_model=list[schemas.LicenciaResponse])
+def listar_licencias(user: models.Usuario = Depends(get_current_user), db: Session = Depends(get_db)):
+    negocio_ids = [n.id for n in db.query(models.Negocio).filter(models.Negocio.usuario_id == user.id).all()]
+    if not negocio_ids:
+        return []
+    return db.query(models.Licencia).filter(models.Licencia.negocio_id.in_(negocio_ids)).all()
+
+@app.post("/api/licencias", response_model=schemas.LicenciaResponse, status_code=201)
+def crear_licencia(data: schemas.LicenciaCreate, user: models.Usuario = Depends(get_current_user), db: Session = Depends(get_db)):
+    try:
+        # Verificar que el negocio pertenece al usuario
+        negocio = db.query(models.Negocio).filter(
+            models.Negocio.id == data.negocio_id,
+            models.Negocio.usuario_id == user.id
+        ).first()
+        if not negocio:
+            raise HTTPException(status_code=403, detail="Negocio no encontrado o no autorizado")
+        
+        # Generar número de licencia peruano (formato municipal)
+        import uuid
+        year = datetime.now().year
+        correlativo = str(uuid.uuid4().int)[:5]
+        numero = f"LIC-{year}-{correlativo}"
+        
+        fecha_emision = datetime.now(timezone.utc)
+        # Licencia provisional: 1 año / Definitiva: 5 años (normativa peruana)
+        if data.tipo_licencia == models.TipoLicencia.provisional:
+            fecha_vencimiento = fecha_emision + timedelta(days=365)
+        else:
+            fecha_vencimiento = fecha_emision + timedelta(days=365*5)
+        
+        nueva_licencia = models.Licencia(
+            negocio_id=data.negocio_id,
+            numero_licencia=numero,
+            tipo_licencia=data.tipo_licencia,
+            estado=models.EstadoLicencia.vigente,
+            fecha_emision=fecha_emision,
+            fecha_vencimiento=fecha_vencimiento,
+            entidad_emisora=data.entidad_emisora
+        )
+        db.add(nueva_licencia)
+        db.commit()
+        db.refresh(nueva_licencia)
+        return nueva_licencia
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+# --- TRABAJADORES ---
+@app.get("/api/trabajadores", response_model=list[schemas.TrabajadorResponse])
+def listar_trabajadores(user: models.Usuario = Depends(get_current_user), db: Session = Depends(get_db)):
+    negocio_ids = [n.id for n in db.query(models.Negocio).filter(models.Negocio.usuario_id == user.id).all()]
+    if not negocio_ids:
+        return []
+    return db.query(models.Trabajador).filter(
+        models.Trabajador.negocio_id.in_(negocio_ids),
+        models.Trabajador.estado == models.EstadoTrabajador.activo
+    ).all()
+
+@app.post("/api/trabajadores", response_model=schemas.TrabajadorResponse, status_code=201)
+def agregar_trabajador(data: schemas.TrabajadorCreate, user: models.Usuario = Depends(get_current_user), db: Session = Depends(get_db)):
+    try:
+        negocio = db.query(models.Negocio).filter(
+            models.Negocio.id == data.negocio_id,
+            models.Negocio.usuario_id == user.id
+        ).first()
+        if not negocio:
+            raise HTTPException(status_code=403, detail="Negocio no encontrado o no autorizado")
+        
+        # Verificar DNI duplicado en el mismo negocio
+        existe = db.query(models.Trabajador).filter(
+            models.Trabajador.negocio_id == data.negocio_id,
+            models.Trabajador.dni == data.dni,
+            models.Trabajador.estado == models.EstadoTrabajador.activo
+        ).first()
+        if existe:
+            raise HTTPException(status_code=400, detail="Ya existe un trabajador activo con ese DNI en este negocio")
+        
+        nuevo = models.Trabajador(
+            negocio_id=data.negocio_id,
+            dni=data.dni,
+            nombre_completo=data.nombre_completo,
+            cargo=data.cargo,
+            fecha_ingreso=datetime.now(timezone.utc),
+            estado=models.EstadoTrabajador.activo
+        )
+        db.add(nuevo)
+        db.commit()
+        db.refresh(nuevo)
+        return nuevo
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+@app.delete("/api/trabajadores/{trabajador_id}")
+def eliminar_trabajador(trabajador_id: int, user: models.Usuario = Depends(get_current_user), db: Session = Depends(get_db)):
+    trabajador = db.query(models.Trabajador).filter(models.Trabajador.id == trabajador_id).first()
+    if not trabajador:
+        raise HTTPException(status_code=404, detail="Trabajador no encontrado")
+    
+    negocio = db.query(models.Negocio).filter(
+        models.Negocio.id == trabajador.negocio_id,
+        models.Negocio.usuario_id == user.id
+    ).first()
+    if not negocio:
+        raise HTTPException(status_code=403, detail="No autorizado")
+    
+    trabajador.estado = models.EstadoTrabajador.inactivo
+    trabajador.fecha_salida = datetime.now(timezone.utc)
+    db.commit()
+    return {"message": "Trabajador desactivado"}
+
+# --- SOLICITUD DE RENOVACIÓN ---
+@app.post("/api/solicitudes/renovacion", response_model=schemas.SolicitudRenovacionResponse, status_code=201)
+def solicitar_renovacion(data: schemas.SolicitudRenovacionCreate, user: models.Usuario = Depends(get_current_user), db: Session = Depends(get_db)):
+    try:
+        negocio = db.query(models.Negocio).filter(
+            models.Negocio.id == data.negocio_id,
+            models.Negocio.usuario_id == user.id
+        ).first()
+        if not negocio:
+            raise HTTPException(status_code=403, detail="Negocio no autorizado")
+        
+        licencia = db.query(models.Licencia).filter(
+            models.Licencia.id == data.licencia_id,
+            models.Licencia.negocio_id == data.negocio_id
+        ).first()
+        if not licencia:
+            raise HTTPException(status_code=404, detail="Licencia no encontrada")
+        
+        # Verificar que no haya solicitud pendiente
+        pendiente = db.query(models.SolicitudRenovacion).filter(
+            models.SolicitudRenovacion.licencia_id == data.licencia_id,
+            models.SolicitudRenovacion.estado == models.EstadoSolicitud.pendiente
+        ).first()
+        if pendiente:
+            raise HTTPException(status_code=400, detail="Ya existe una solicitud de renovación pendiente")
+        
+        solicitud = models.SolicitudRenovacion(
+            licencia_id=data.licencia_id,
+            negocio_id=data.negocio_id,
+            estado=models.EstadoSolicitud.pendiente,
+            motivo=data.motivo
+        )
+        db.add(solicitud)
+        db.commit()
+        db.refresh(solicitud)
+        return solicitud
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+# --- MI NEGOCIO (datos propios) ---
+@app.get("/api/mi-negocio")
+def mi_negocio(user: models.Usuario = Depends(get_current_user), db: Session = Depends(get_db)):
+    negocio = db.query(models.Negocio).filter(models.Negocio.usuario_id == user.id).first()
+    if not negocio:
+        raise HTTPException(status_code=404, detail="No tienes un negocio registrado")
+    return {
+        "id": negocio.id,
+        "nombre_negocio": negocio.nombre_negocio,
+        "tipo": negocio.tipo.value,
+        "rubro": negocio.rubro,
+        "referencia_ubicacion": negocio.referencia_ubicacion,
+        "galeria_nombre": negocio.galeria_nombre,
+        "stand_numero": negocio.stand_numero,
+        "estado": negocio.estado.value
+    }

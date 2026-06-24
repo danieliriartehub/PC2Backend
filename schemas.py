@@ -93,3 +93,79 @@ class ResetPasswordRequest(BaseModel):
     correo: EmailStr
     codigo: str = Field(..., min_length=6, max_length=6)
     new_password: str = Field(..., min_length=6)
+
+# --- Licencia ---
+class LicenciaBase(BaseModel):
+    numero_licencia: str
+    tipo_licencia: TipoLicencia
+    estado: EstadoLicencia = EstadoLicencia.en_tramite
+    fecha_emision: Optional[datetime] = None
+    fecha_vencimiento: Optional[datetime] = None
+    entidad_emisora: Optional[str] = None
+
+class LicenciaCreate(BaseModel):
+    negocio_id: int
+    tipo_licencia: TipoLicencia = TipoLicencia.provisional
+    entidad_emisora: str = Field(default="Municipalidad", max_length=255)
+
+class LicenciaResponse(LicenciaBase):
+    id: int
+    negocio_id: int
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+# --- Trabajador ---
+class TrabajadorCreate(BaseModel):
+    negocio_id: int
+    dni: str = Field(..., min_length=8, max_length=8, pattern=r"^\d{8}$")
+    nombre_completo: str = Field(..., min_length=2, max_length=255)
+    cargo: Optional[str] = Field(None, max_length=100)
+
+class TrabajadorResponse(BaseModel):
+    id: int
+    negocio_id: int
+    dni: str
+    nombre_completo: str
+    cargo: Optional[str] = None
+    estado: EstadoTrabajador
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+# --- Solicitud Renovación ---
+class SolicitudRenovacionCreate(BaseModel):
+    licencia_id: int
+    negocio_id: int
+    motivo: Optional[str] = Field(None, max_length=500)
+
+class SolicitudRenovacionResponse(BaseModel):
+    id: int
+    licencia_id: int
+    negocio_id: int
+    estado: EstadoSolicitud
+    motivo: Optional[str] = None
+    fecha_solicitud: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+# --- Dashboard (Vista unificada) ---
+class NegocioDashboard(BaseModel):
+    id: int
+    nombre_negocio: str
+    tipo: TipoNegocio
+    rubro: Optional[str] = None
+    estado: EstadoNegocio
+    referencia_ubicacion: Optional[str] = None
+    galeria_nombre: Optional[str] = None
+    stand_numero: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+class DashboardResponse(BaseModel):
+    usuario_id: int
+    nombre: str
+    rol: str
+    negocios: List[NegocioDashboard]
+    licencias: List[LicenciaResponse]
+    trabajadores: List[TrabajadorResponse]
