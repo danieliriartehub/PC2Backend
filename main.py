@@ -20,7 +20,7 @@ app = FastAPI(title="FormalízaYa API - DevSecOps", lifespan=lifespan)
 # Configurar CORS (DevSecOps: Solo permitir dominios de confianza)
 origins = [
     "http://localhost:5173", # Frontend VITE
-    "https://pc2-frontend.vercel.app", # Reemplazar con el dominio real de Vercel
+    "https://pc-2-frontend0503.vercel.app", # URL real de Vercel
     # "https://tu-dominio-produccion.com"
 ]
 
