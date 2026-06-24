@@ -129,6 +129,7 @@ class TrabajadorResponse(BaseModel):
     nombre_completo: str
     cargo: Optional[str] = None
     estado: EstadoTrabajador
+    tiene_contrato: bool = False
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -146,6 +147,22 @@ class SolicitudRenovacionResponse(BaseModel):
     estado: EstadoSolicitud
     motivo: Optional[str] = None
     fecha_solicitud: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+# --- Registro Tributario (SUNAT) ---
+class RegistroTributarioCreate(BaseModel):
+    negocio_id: int
+    ruc: str = Field(..., min_length=11, max_length=11, pattern=r"^\d{11}$")
+    razon_social: str = Field(..., min_length=2, max_length=255)
+
+class RegistroTributarioResponse(BaseModel):
+    id: int
+    negocio_id: int
+    ruc: str
+    razon_social: str
+    estado_sunat: Optional[EstadoSunat] = None
+    created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -169,3 +186,4 @@ class DashboardResponse(BaseModel):
     negocios: List[NegocioDashboard]
     licencias: List[LicenciaResponse]
     trabajadores: List[TrabajadorResponse]
+    registro_tributario: Optional[RegistroTributarioResponse] = None

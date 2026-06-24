@@ -19,6 +19,7 @@ async def lifespan(app: FastAPI):
         with engine.connect() as conn:
             conn.execute(text("ALTER TABLE negocio ADD COLUMN IF NOT EXISTS galeria_nombre VARCHAR(255);"))
             conn.execute(text("ALTER TABLE negocio ADD COLUMN IF NOT EXISTS stand_numero VARCHAR(50);"))
+            conn.execute(text("ALTER TABLE trabajador ADD COLUMN IF NOT EXISTS tiene_contrato BOOLEAN DEFAULT FALSE;"))
             conn.commit()
     except Exception as e:
         print(f"Error en auto-migración: {e}")
@@ -222,6 +223,7 @@ def get_dashboard(user: models.Usuario = Depends(get_current_user), db: Session 
     
     licencias = db.query(models.Licencia).filter(models.Licencia.negocio_id.in_(negocio_ids)).all() if negocio_ids else []
     trabajadores = db.query(models.Trabajador).filter(models.Trabajador.negocio_id.in_(negocio_ids)).all() if negocio_ids else []
+    registro_tributario = db.query(models.RegistroTributario).filter(models.RegistroTributario.negocio_id.in_(negocio_ids)).first() if negocio_ids else None
     
     return schemas.DashboardResponse(
         usuario_id=user.id,
@@ -229,7 +231,8 @@ def get_dashboard(user: models.Usuario = Depends(get_current_user), db: Session 
         rol=user.rol.value,
         negocios=[schemas.NegocioDashboard.model_validate(n) for n in negocios],
         licencias=[schemas.LicenciaResponse.model_validate(l) for l in licencias],
-        trabajadores=[schemas.TrabajadorResponse.model_validate(t) for t in trabajadores]
+        trabajadores=[schemas.TrabajadorResponse.model_validate(t) for t in trabajadores],
+        registro_tributario=schemas.RegistroTributarioResponse.model_validate(registro_tributario) if registro_tributario else None
     )
 
 # --- LICENCIAS ---
@@ -349,6 +352,24 @@ def eliminar_trabajador(trabajador_id: int, user: models.Usuario = Depends(get_c
     db.commit()
     return {"message": "Trabajador desactivado"}
 
+@app.patch("/api/trabajadores/{trabajador_id}/contrato")
+def marcar_contrato_trabajador(trabajador_id: int, user: models.Usuario = Depends(get_current_user), db: Session = Depends(get_db)):
+    trabajador = db.query(models.Trabajador).filter(models.Trabajador.id == trabajador_id).first()
+    if not trabajador:
+        raise HTTPException(status_code=404, detail="Trabajador no encontrado")
+    
+    negocio = db.query(models.Negocio).filter(
+        models.Negocio.id == trabajador.negocio_id,
+        models.Negocio.usuario_id == user.id
+    ).first()
+    if not negocio:
+        raise HTTPException(status_code=403, detail="No autorizado")
+    
+    trabajador.tiene_contrato = not trabajador.tiene_contrato # Toggle contract status
+    db.commit()
+    db.refresh(trabajador)
+    return schemas.TrabajadorResponse.model_validate(trabajador)
+
 # --- SOLICITUD DE RENOVACIÓN ---
 @app.post("/api/solicitudes/renovacion", response_model=schemas.SolicitudRenovacionResponse, status_code=201)
 def solicitar_renovacion(data: schemas.SolicitudRenovacionCreate, user: models.Usuario = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -407,3 +428,41 @@ def mi_negocio(user: models.Usuario = Depends(get_current_user), db: Session = D
         "stand_numero": negocio.stand_numero,
         "estado": negocio.estado.value
     }
+
+# --- REGISTRO TRIBUTARIO (SUNAT) ---
+@app.post("/api/negocios/sunat", response_model=schemas.RegistroTributarioResponse, status_code=201)
+def registrar_sunat(data: schemas.RegistroTributarioCreate, user: models.Usuario = Depends(get_current_user), db: Session = Depends(get_db)):
+    try:
+        negocio = db.query(models.Negocio).filter(
+            models.Negocio.id == data.negocio_id,
+            models.Negocio.usuario_id == user.id
+        ).first()
+        if not negocio:
+            raise HTTPException(status_code=403, detail="Negocio no autorizado")
+        
+        # Check if already exists
+        existente = db.query(models.RegistroTributario).filter(models.RegistroTributario.negocio_id == data.negocio_id).first()
+        if existente:
+            raise HTTPException(status_code=400, detail="Este negocio ya tiene un RUC registrado")
+        
+        # Verify RUC logic
+        ruc_existente = db.query(models.RegistroTributario).filter(models.RegistroTributario.ruc == data.ruc).first()
+        if ruc_existente:
+             raise HTTPException(status_code=400, detail="Este RUC ya está siendo usado por otro negocio")
+
+        nuevo = models.RegistroTributario(
+            negocio_id=data.negocio_id,
+            ruc=data.ruc,
+            razon_social=data.razon_social,
+            estado_sunat=models.EstadoSunat.activo, # Auto activate for MVP
+            ultima_consulta=datetime.now(timezone.utc)
+        )
+        db.add(nuevo)
+        db.commit()
+        db.refresh(nuevo)
+        return schemas.RegistroTributarioResponse.model_validate(nuevo)
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
