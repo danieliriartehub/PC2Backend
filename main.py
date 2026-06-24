@@ -48,69 +48,136 @@ async def audit_middleware(request: Request, call_next):
 def read_root():
     return {"message": "FormalízaYa API conectada a PostgreSQL"}
 
-# --- RUTAS DE AUTENTICACIÓN ---
-@app.post("/api/auth/register", response_model=schemas.UsuarioResponse, status_code=status.HTTP_201_CREATED)
-def register_user(user: schemas.UsuarioCreate, db: Session = Depends(get_db)):
-    db_user = db.query(models.Usuario).filter(models.Usuario.correo == user.correo).first()
-    if db_user:
+# --- RUTAS DE AUTENTICACIÓN Y REGISTRO REAL ---
+@app.post("/api/negocios/registrar_ambulante", response_model=schemas.UsuarioResponse, status_code=status.HTTP_201_CREATED)
+def registrar_ambulante(data: schemas.RegistroAmbulanteCreate, db: Session = Depends(get_db)):
+    # Validar correo único
+    if db.query(models.Usuario).filter(models.Usuario.correo == data.correo).first():
         raise HTTPException(status_code=400, detail="El correo ya está registrado")
+    # Validar DNI único
+    if db.query(models.Usuario).filter(models.Usuario.dni == data.dni).first():
+        raise HTTPException(status_code=400, detail="El DNI ya está registrado")
     
-    hashed_password = security.get_password_hash(user.password)
-    new_user = models.Usuario(
-        dni=user.dni,
-        ruc=user.ruc,
-        nombre_completo=user.nombre_completo,
-        celular=user.celular,
-        correo=user.correo,
+    # Crear Usuario
+    hashed_password = security.get_password_hash(data.password)
+    nuevo_usuario = models.Usuario(
+        dni=data.dni,
+        nombre_completo=f"Ambulante {data.dni}", # Idealmente viene de RENIEC
+        correo=data.correo,
         password_hash=hashed_password,
-        rol=user.rol
+        rol=models.RolUsuario.ambulante
     )
-    db.add(new_user)
+    db.add(nuevo_usuario)
+    db.flush() # Para obtener el ID
+
+    # Crear Negocio
+    nuevo_negocio = models.Negocio(
+        usuario_id=nuevo_usuario.id,
+        nombre_negocio=data.negocio,
+        tipo=models.TipoNegocio.ambulante,
+        rubro=data.rubro,
+        referencia_ubicacion=data.referencia
+    )
+    db.add(nuevo_negocio)
     db.commit()
-    db.refresh(new_user)
-    return new_user
+    db.refresh(nuevo_usuario)
+    return nuevo_usuario
+
+@app.post("/api/negocios/registrar_galeria", response_model=schemas.UsuarioResponse, status_code=status.HTTP_201_CREATED)
+def registrar_galeria(data: schemas.RegistroGaleriaCreate, db: Session = Depends(get_db)):
+    if db.query(models.Usuario).filter(models.Usuario.correo == data.correo).first():
+        raise HTTPException(status_code=400, detail="El correo ya está registrado")
+    if db.query(models.Usuario).filter(models.Usuario.dni == data.dni).first():
+        raise HTTPException(status_code=400, detail="El DNI ya está registrado")
+    
+    hashed_password = security.get_password_hash(data.password)
+    nuevo_usuario = models.Usuario(
+        dni=data.dni,
+        nombre_completo=f"Galería {data.dni}",
+        correo=data.correo,
+        password_hash=hashed_password,
+        rol=models.RolUsuario.galeria
+    )
+    db.add(nuevo_usuario)
+    db.flush()
+
+    nuevo_negocio = models.Negocio(
+        usuario_id=nuevo_usuario.id,
+        nombre_negocio=data.negocio,
+        tipo=models.TipoNegocio.galeria,
+        rubro=data.rubro,
+        galeria_nombre=data.galeria_nombre,
+        stand_numero=data.stand_numero
+    )
+    db.add(nuevo_negocio)
+    db.commit()
+    db.refresh(nuevo_usuario)
+    return nuevo_usuario
 
 @app.post("/api/auth/login")
-def login(user_credentials: schemas.UsuarioCreate, db: Session = Depends(get_db)):
-    db_user = db.query(models.Usuario).filter(models.Usuario.correo == user_credentials.correo).first()
-    if not db_user or not security.verify_password(user_credentials.password, db_user.password_hash):
+def login(credentials: schemas.LoginCreate, db: Session = Depends(get_db)):
+    db_user = db.query(models.Usuario).filter(models.Usuario.correo == credentials.correo).first()
+    if not db_user or not security.verify_password(credentials.password, db_user.password_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales incorrectas")
     
     access_token = security.create_access_token(data={"sub": str(db_user.id)})
-    refresh_token = security.create_refresh_token(data={"sub": str(db_user.id)})
     
-    return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
-
-# --- RUTAS MOCK SUNAT/RENIEC ---
-@app.get("/api/mock/sunat/{ruc}")
-def mock_sunat(ruc: str):
-    """Simulación de la API de SUNAT para DevSecOps."""
-    if len(ruc) != 11:
-        raise HTTPException(status_code=400, detail="RUC inválido")
     return {
-        "ruc": ruc,
-        "razon_social": "NEGOCIO DE PRUEBA E.I.R.L",
-        "estado": "ACTIVO",
-        "condicion": "HABIDO"
+        "access_token": access_token, 
+        "token_type": "bearer", 
+        "rol": db_user.rol.value, 
+        "nombre": db_user.nombre_completo
     }
 
-@app.get("/api/mock/reniec/{dni}")
-def mock_reniec(dni: str):
-    """Simulación de la API de RENIEC."""
-    if len(dni) != 8:
-        raise HTTPException(status_code=400, detail="DNI inválido")
-    return {
-        "dni": dni,
-        "nombres": "JUAN PEREZ",
-        "apellido_paterno": "MARTINEZ",
-        "apellido_materno": "GARCIA"
-    }
+import random
+from datetime import datetime, timedelta, timezone
 
-# --- RUTAS DE PRUEBA DE CONEXIÓN FRONTEND (TEMPORALES) ---
-@app.post("/api/vendedores")
-def test_vendedores_connection(data: dict):
-    """
-    Ruta temporal para verificar que Vercel se comunica con Railway.
-    El frontend generado por Lovable hace POST a /vendedores.
-    """
-    return {"message": "¡Conexión exitosa desde Vercel a Railway!", "data_recibida": data}
+@app.post("/api/auth/recuperar_password")
+def recuperar_password(data: schemas.RecoverRequest, db: Session = Depends(get_db)):
+    user = db.query(models.Usuario).filter(models.Usuario.correo == data.correo).first()
+    if not user:
+        # DevSecOps: Retornar 200 siempre para evitar enumeración de correos
+        return {"message": "Si el correo existe, se ha enviado un código."}
+    
+    codigo = f"{random.randint(100000, 999999)}"
+    expiracion = datetime.now(timezone.utc) + timedelta(minutes=15)
+    
+    nuevo_codigo = models.CodigoRecuperacion(
+        correo=data.correo,
+        codigo=codigo,
+        expira_en=expiracion
+    )
+    db.add(nuevo_codigo)
+    db.commit()
+    
+    # MOCK ENVÍO CORREO
+    print(f"\\n[{datetime.now()}] 📧 SIMULACIÓN ENVÍO DE CORREO:")
+    print(f"Para: {data.correo}")
+    print(f"Código de recuperación: {codigo}\\n")
+    
+    return {"message": "Si el correo existe, se ha enviado un código."}
+
+@app.post("/api/auth/reset_password")
+def reset_password(data: schemas.ResetPasswordRequest, db: Session = Depends(get_db)):
+    # Buscar el último código no usado para ese correo
+    registro_codigo = db.query(models.CodigoRecuperacion).filter(
+        models.CodigoRecuperacion.correo == data.correo,
+        models.CodigoRecuperacion.codigo == data.codigo,
+        models.CodigoRecuperacion.usado == False
+    ).order_by(models.CodigoRecuperacion.created_at.desc()).first()
+    
+    if not registro_codigo:
+        raise HTTPException(status_code=400, detail="Código inválido o ya usado")
+        
+    if registro_codigo.expira_en < datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="El código ha expirado")
+        
+    user = db.query(models.Usuario).filter(models.Usuario.correo == data.correo).first()
+    if not user:
+        raise HTTPException(status_code=400, detail="Usuario no encontrado")
+        
+    user.password_hash = security.get_password_hash(data.new_password)
+    registro_codigo.usado = True
+    db.commit()
+    
+    return {"message": "Contraseña actualizada exitosamente"}

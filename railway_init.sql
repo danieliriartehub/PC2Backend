@@ -207,6 +207,15 @@ CREATE TABLE CONSULTA_EXTERNA (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE CODIGO_RECUPERACION (
+    id SERIAL PRIMARY KEY,
+    correo VARCHAR(255) NOT NULL,
+    codigo VARCHAR(6) NOT NULL,
+    expira_en TIMESTAMP WITH TIME ZONE NOT NULL,
+    usado BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
 -- ==========================================
 -- FIN DEL SCRIPT
 -- ==========================================

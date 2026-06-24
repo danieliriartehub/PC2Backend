@@ -265,3 +265,14 @@ class ConsultaExterna(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     negocio = relationship("Negocio", back_populates="consultas")
+
+
+class CodigoRecuperacion(Base):
+    __tablename__ = "codigo_recuperacion"
+
+    id = Column(Integer, primary_key=True, index=True)
+    correo = Column(String(255), index=True, nullable=False)
+    codigo = Column(String(6), nullable=False)
+    expira_en = Column(DateTime(timezone=True), nullable=False)
+    usado = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
