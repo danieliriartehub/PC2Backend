@@ -172,6 +172,7 @@ class Trabajador(Base):
     fecha_ingreso = Column(DateTime)
     fecha_salida = Column(DateTime)
     estado = Column(Enum(EstadoTrabajador), default=EstadoTrabajador.activo)
+    tiene_contrato = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     negocio = relationship("Negocio", back_populates="trabajadores")
