@@ -105,3 +105,12 @@ def mock_reniec(dni: str):
         "apellido_paterno": "MARTINEZ",
         "apellido_materno": "GARCIA"
     }
+
+# --- RUTAS DE PRUEBA DE CONEXIÓN FRONTEND (TEMPORALES) ---
+@app.post("/api/vendedores")
+def test_vendedores_connection(data: dict):
+    """
+    Ruta temporal para verificar que Vercel se comunica con Railway.
+    El frontend generado por Lovable hace POST a /vendedores.
+    """
+    return {"message": "¡Conexión exitosa desde Vercel a Railway!", "data_recibida": data}
