@@ -61,68 +61,76 @@ def read_root():
 # --- RUTAS DE AUTENTICACIÓN Y REGISTRO REAL ---
 @app.post("/api/negocios/registrar_ambulante", response_model=schemas.UsuarioResponse, status_code=status.HTTP_201_CREATED)
 def registrar_ambulante(data: schemas.RegistroAmbulanteCreate, db: Session = Depends(get_db)):
-    # Validar correo único
-    if db.query(models.Usuario).filter(models.Usuario.correo == data.correo).first():
-        raise HTTPException(status_code=400, detail="El correo ya está registrado")
-    # Validar DNI único
-    if db.query(models.Usuario).filter(models.Usuario.dni == data.dni).first():
-        raise HTTPException(status_code=400, detail="El DNI ya está registrado")
-    
-    # Crear Usuario
-    hashed_password = security.get_password_hash(data.password)
-    nuevo_usuario = models.Usuario(
-        dni=data.dni,
-        nombre_completo=f"Ambulante {data.dni}", # Idealmente viene de RENIEC
-        correo=data.correo,
-        password_hash=hashed_password,
-        rol=models.RolUsuario.ambulante
-    )
-    db.add(nuevo_usuario)
-    db.flush() # Para obtener el ID
+    try:
+        # Validar correo único
+        if db.query(models.Usuario).filter(models.Usuario.correo == data.correo).first():
+            raise HTTPException(status_code=400, detail="El correo ya está registrado")
+        # Validar DNI único
+        if db.query(models.Usuario).filter(models.Usuario.dni == data.dni).first():
+            raise HTTPException(status_code=400, detail="El DNI ya está registrado")
+        
+        # Crear Usuario
+        hashed_password = security.get_password_hash(data.password)
+        nuevo_usuario = models.Usuario(
+            dni=data.dni,
+            nombre_completo=f"Ambulante {data.dni}", # Idealmente viene de RENIEC
+            correo=data.correo,
+            password_hash=hashed_password,
+            rol=models.RolUsuario.ambulante
+        )
+        db.add(nuevo_usuario)
+        db.flush() # Para obtener el ID
 
-    # Crear Negocio
-    nuevo_negocio = models.Negocio(
-        usuario_id=nuevo_usuario.id,
-        nombre_negocio=data.negocio,
-        tipo=models.TipoNegocio.ambulante,
-        rubro=data.rubro,
-        referencia_ubicacion=data.referencia
-    )
-    db.add(nuevo_negocio)
-    db.commit()
-    db.refresh(nuevo_usuario)
-    return nuevo_usuario
+        # Crear Negocio
+        nuevo_negocio = models.Negocio(
+            usuario_id=nuevo_usuario.id,
+            nombre_negocio=data.negocio,
+            tipo=models.TipoNegocio.ambulante,
+            rubro=data.rubro,
+            referencia_ubicacion=data.referencia
+        )
+        db.add(nuevo_negocio)
+        db.commit()
+        db.refresh(nuevo_usuario)
+        return nuevo_usuario
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @app.post("/api/negocios/registrar_galeria", response_model=schemas.UsuarioResponse, status_code=status.HTTP_201_CREATED)
 def registrar_galeria(data: schemas.RegistroGaleriaCreate, db: Session = Depends(get_db)):
-    if db.query(models.Usuario).filter(models.Usuario.correo == data.correo).first():
-        raise HTTPException(status_code=400, detail="El correo ya está registrado")
-    if db.query(models.Usuario).filter(models.Usuario.dni == data.dni).first():
-        raise HTTPException(status_code=400, detail="El DNI ya está registrado")
-    
-    hashed_password = security.get_password_hash(data.password)
-    nuevo_usuario = models.Usuario(
-        dni=data.dni,
-        nombre_completo=f"Galería {data.dni}",
-        correo=data.correo,
-        password_hash=hashed_password,
-        rol=models.RolUsuario.galeria
-    )
-    db.add(nuevo_usuario)
-    db.flush()
+    try:
+        if db.query(models.Usuario).filter(models.Usuario.correo == data.correo).first():
+            raise HTTPException(status_code=400, detail="El correo ya está registrado")
+        if db.query(models.Usuario).filter(models.Usuario.dni == data.dni).first():
+            raise HTTPException(status_code=400, detail="El DNI ya está registrado")
+        
+        hashed_password = security.get_password_hash(data.password)
+        nuevo_usuario = models.Usuario(
+            dni=data.dni,
+            nombre_completo=f"Galería {data.dni}",
+            correo=data.correo,
+            password_hash=hashed_password,
+            rol=models.RolUsuario.galeria
+        )
+        db.add(nuevo_usuario)
+        db.flush()
 
-    nuevo_negocio = models.Negocio(
-        usuario_id=nuevo_usuario.id,
-        nombre_negocio=data.negocio,
-        tipo=models.TipoNegocio.galeria,
-        rubro=data.rubro,
-        galeria_nombre=data.galeria_nombre,
-        stand_numero=data.stand_numero
-    )
-    db.add(nuevo_negocio)
-    db.commit()
-    db.refresh(nuevo_usuario)
-    return nuevo_usuario
+        nuevo_negocio = models.Negocio(
+            usuario_id=nuevo_usuario.id,
+            nombre_negocio=data.negocio,
+            tipo=models.TipoNegocio.galeria,
+            rubro=data.rubro,
+            galeria_nombre=data.galeria_nombre,
+            stand_numero=data.stand_numero
+        )
+        db.add(nuevo_negocio)
+        db.commit()
+        db.refresh(nuevo_usuario)
+        return nuevo_usuario
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @app.post("/api/auth/login")
 def login(credentials: schemas.LoginCreate, db: Session = Depends(get_db)):
